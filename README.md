@@ -11,7 +11,23 @@ esp_lcd/DMA. Compiles for `esp32dev` with the Arduino 3.2.1 core. Not yet run on
 
 ## Build and flash
     pio run -e cyd -t upload
-    pio device monitor
+    pio device monitor -b 115200
+
+Wi-Fi and MQTT credentials live in `include/secrets.h` (gitignored; see
+`include/secrets.h.example`). The Wi-Fi values were copied from the ESPHome secrets.
+
+## MQTT control
+Broker 10.0.0.13:1883, client id `monster-eyes-cyd`.
+
+| topic                    | direction | payload                                   |
+|--------------------------|-----------|-------------------------------------------|
+| `monster_eyes/eye/set`   | to board  | `open` / `closed` (also on/off, 1/0)      |
+| `monster_eyes/eye/state` | from board| `open` / `closed`, retained               |
+| `monster_eyes/status`    | from board| `online` / `offline`, retained, LWT       |
+
+`./eye.py open`, `./eye.py closed`, `./eye.py watch` use paho-mqtt from the
+homeassistant pyenv to drive and observe it. A command eases the lids shut over
+250 ms and holds them; `open` hands the lids back to the library's own blinking.
 
 ## Eye graphics (no USB drive on this board)
 The library reads `/config.eye` and BMPs from the `ffat` FAT partition

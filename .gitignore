@@ -1,3 +1,4 @@
 .pio/
-/assets/*.img
+include/secrets.h
 .python-version
+assets/*.img
