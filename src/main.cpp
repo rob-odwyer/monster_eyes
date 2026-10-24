@@ -43,7 +43,7 @@
 #define SYNC_SDA  27
 #define SYNC_SCL  22
 #ifndef SYNC_HZ
-#define SYNC_HZ   400000  // Drop to 100000 for a long or flaky cable
+#define SYNC_HZ   100000  // 400 kHz NACKs on CN1 with only internal pull-ups
 #endif
 #define SYNC_ADDR 0x42
 

@@ -52,9 +52,10 @@ Flash each board with its role, and the same eye image on both:
 
 The primary draws the character's right eye and the secondary the left, so facing the
 character the primary sits on your left. Each prints `Eye size: N px` at boot; the two
-must match. If they differ, pin both with `-DEYE_SIZE=N` in `platformio.ini`. For a long
-or unreliable cable, add `-DSYNC_HZ=100000` and/or 4.7k pull-ups from SDA and SCL to
-3.3V on one board.
+must match. If they differ, pin both with `-DEYE_SIZE=N` in `platformio.ini`. The link runs
+at 100 kHz: at 400 kHz every packet was NACKed, because the ESP32's internal pull-ups are
+too weak for that speed. With 4.7k pull-ups from SDA and SCL to 3.3V on one board you
+can try `-DSYNC_HZ=400000`.
 
 Every five seconds the primary logs `sync: sent N, failed M` and the secondary logs
 `sync: LOCKED` or `free-running`, with a hint when something is wrong.
