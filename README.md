@@ -29,6 +29,36 @@ Broker 10.0.0.13:1883, client id `monster-eyes-cyd`.
 homeassistant pyenv to drive and observe it. A command eases the lids shut over
 250 ms and holds them; `open` hands the lids back to the library's own blinking.
 
+## Two synced eyes over I2C
+One board is the primary: it animates, takes the MQTT commands above, and sends
+gaze, pupil, blink and clock to the secondary every frame. The secondary renders what
+it receives, and falls back to animating on its own if the link goes quiet.
+
+Wiring, on the 4-pin CN1 connector (GND, IO22, IO27, 3.3V) of each board:
+
+| primary | secondary | role |
+|---------|-----------|------|
+| GND     | GND       | ground (required) |
+| IO27    | IO27      | SDA |
+| IO22    | IO22      | SCL |
+| 3.3V    | not connected | |
+
+Flash each board with its role, and the same eye image on both:
+
+    pio run -e cyd_primary   -t upload --upload-port /dev/cu.usbserial-AAAA
+    pio run -e cyd_secondary -t upload --upload-port /dev/cu.usbserial-BBBB
+    PORT=/dev/cu.usbserial-AAAA ./build-eye-image.sh demon --flash
+    PORT=/dev/cu.usbserial-BBBB ./build-eye-image.sh demon --flash
+
+The primary draws the character's right eye and the secondary the left, so facing the
+character the primary sits on your left. Each prints `Eye size: N px` at boot; the two
+must match. If they differ, pin both with `-DEYE_SIZE=N` in `platformio.ini`. For a long
+or unreliable cable, add `-DSYNC_HZ=100000` and/or 4.7k pull-ups from SDA and SCL to
+3.3V on one board.
+
+Every five seconds the primary logs `sync: sent N, failed M` and the secondary logs
+`sync: LOCKED` or `free-running`, with a hint when something is wrong.
+
 ## Eye graphics (no USB drive on this board)
 The library reads `/config.eye` and BMPs from the `ffat` FAT partition
 (`default_ffat.csv`: offset 0x290000, size 0x160000). All of Adafruit's eye designs are
