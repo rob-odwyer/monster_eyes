@@ -1,0 +1,4 @@
+[submodule "lib/Adafruit_Monster_Eyes"]
+	path = lib/Adafruit_Monster_Eyes
+	url = https://github.com/rob-odwyer/Adafruit_Monster_Eyes.git
+	branch = main
