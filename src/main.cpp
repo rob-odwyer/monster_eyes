@@ -12,11 +12,18 @@
 //   monster_eyes/eye/set    <- "open" | "closed"  (also on/off, 1/0, true/false)
 //   monster_eyes/eye/state  -> "open" | "closed"  (retained)
 //   monster_eyes/status     -> "online" | "offline" (retained, LWT)
-// The secondary only reports monster_eyes/secondary/status; commands go to
-// the primary, and the lid position reaches the secondary over I2C.
+// The secondary reports monster_eyes/secondary/status and
+// monster_eyes/secondary/sync ("locked" | "free"); commands go to the
+// primary, and the lid position reaches the secondary over I2C.
+//
+// Home Assistant MQTT discovery: each board publishes one device-discovery
+// message to homeassistant/device/<id>/config on connect, and again whenever
+// Home Assistant announces "online" on homeassistant/status.
 #include <Arduino.h>
 #include <Adafruit_Monster_Eyes.h>
+#include <ArduinoJson.h>
 #include <PubSubClient.h>
+#include <esp_random.h>
 #include <WiFi.h>
 #include <driver/spi_master.h>
 #if defined(EYES_ROLE_PRIMARY) || defined(EYES_ROLE_SECONDARY)
@@ -69,6 +76,15 @@
 #endif
 #define TOPIC_SET       "monster_eyes/eye/set"
 #define TOPIC_STATE     "monster_eyes/eye/state"
+#define TOPIC_SYNC      "monster_eyes/secondary/sync"
+#define TOPIC_HA_STATUS "homeassistant/status"
+#if defined(EYES_ROLE_SECONDARY)
+#define HA_DEVICE_ID    "monster_eyes_secondary"
+#else
+#define HA_DEVICE_ID    "monster_eyes_primary"
+#endif
+#define HA_DISCOVERY_TOPIC "homeassistant/device/" HA_DEVICE_ID "/config"
+#define FW_VERSION      "1.1.0"
 
 // How fast the lids travel on an MQTT command, in blink-phase units per
 // second. 4.0 means a full close takes 250 ms.
@@ -98,12 +114,111 @@ static bool lidHeld = false;     // true while we own the lids via setBlink()
 //  MQTT
 // ---------------------------------------------------------------------------
 
+// Discovery is sent a short random delay after connecting or after Home
+// Assistant's birth message, and states follow a second later so they land
+// after Home Assistant has created the entities. 0 = nothing pending.
+static uint32_t discoveryDueMs = 0;
+static uint32_t statesDueMs = 0;
+
+static void scheduleDiscovery(uint32_t maxDelayMs) {
+  discoveryDueMs = millis() + 100 + (esp_random() % (maxDelayMs + 1));
+  if (!discoveryDueMs)
+    discoveryDueMs = 1;
+}
+
 static void publishState(void) {
 #if defined(EYES_ROLE_SECONDARY)
   return; // The primary owns the eye state
 #endif
   if (mqtt.connected())
     mqtt.publish(TOPIC_STATE, eyeClosed ? "closed" : "open", true);
+}
+
+#if defined(EYES_ROLE_SECONDARY)
+static bool syncLocked = false;
+static void publishSync(void) {
+  if (mqtt.connected())
+    mqtt.publish(TOPIC_SYNC, syncLocked ? "locked" : "free", true);
+}
+#endif
+
+static void publishStates(void) {
+  mqtt.publish(TOPIC_STATUS, "online", true);
+#if defined(EYES_ROLE_SECONDARY)
+  publishSync();
+#else
+  publishState();
+#endif
+}
+
+// One device-discovery message per board. Keys use Home Assistant's
+// abbreviations to keep the payload well under the MQTT buffer.
+static void publishDiscovery(void) {
+  JsonDocument doc;
+  JsonObject dev = doc["dev"].to<JsonObject>();
+  dev["ids"].to<JsonArray>().add(HA_DEVICE_ID);
+  dev["mf"] = "Adafruit Monster Eyes";
+  dev["mdl"] = "ESP32-2432S028R";
+  dev["sw"] = FW_VERSION;
+  JsonObject o = doc["o"].to<JsonObject>();
+  o["name"] = "monster-eyes-cyd";
+  o["sw"] = FW_VERSION;
+  JsonObject cmps = doc["cmps"].to<JsonObject>();
+
+#if defined(EYES_ROLE_SECONDARY)
+  dev["name"] = "Monster eyes secondary";
+  dev["via_dev"] = "monster_eyes_primary";
+
+  // Online: no availability, so it reads "off" (not "unavailable") when the
+  // last-will message fires.
+  JsonObject on = cmps["online"].to<JsonObject>();
+  on["p"] = "binary_sensor";
+  on["uniq_id"] = "monster_eyes_secondary_online";
+  on["name"] = "Online";
+  on["stat_t"] = TOPIC_STATUS;
+  on["pl_on"] = "online";
+  on["pl_off"] = "offline";
+  on["dev_cla"] = "connectivity";
+  on["ent_cat"] = "diagnostic";
+
+  JsonObject sy = cmps["sync"].to<JsonObject>();
+  sy["p"] = "binary_sensor";
+  sy["uniq_id"] = "monster_eyes_secondary_sync";
+  sy["name"] = "Sync locked";
+  sy["stat_t"] = TOPIC_SYNC;
+  sy["pl_on"] = "locked";
+  sy["pl_off"] = "free";
+  sy["ic"] = "mdi:link-variant";
+  sy["ent_cat"] = "diagnostic";
+  sy["avty_t"] = TOPIC_STATUS;
+#else
+  dev["name"] = "Monster eyes";
+  doc["avty_t"] = TOPIC_STATUS; // Whole device greys out when offline
+
+  JsonObject sw = cmps["eyes_open"].to<JsonObject>();
+  sw["p"] = "switch";
+  sw["uniq_id"] = "monster_eyes_open";
+  sw["name"] = "Open";
+  sw["cmd_t"] = TOPIC_SET;
+  sw["stat_t"] = TOPIC_STATE;
+  sw["pl_on"] = "open";
+  sw["pl_off"] = "closed";
+  sw["stat_on"] = "open";
+  sw["stat_off"] = "closed";
+  sw["ic"] = "mdi:eye";
+#endif
+
+  static char buf[900];
+  const size_t n = serializeJson(doc, buf, sizeof(buf));
+  if (n == 0 || n >= sizeof(buf) - 1) {
+    Serial.println("MQTT: discovery payload too large");
+    return;
+  }
+  // Not retained: Home Assistant recommends resending on its birth message
+  // instead, which avoids ghost entities if this device is retired.
+  const bool ok = mqtt.publish(HA_DISCOVERY_TOPIC, (const uint8_t *)buf, n, false);
+  Serial.printf("MQTT: discovery %s (%u bytes)\n", ok ? "sent" : "FAILED",
+                (unsigned)n);
 }
 
 static bool parseClosed(const char *s, bool *closed) {
@@ -130,6 +245,14 @@ static void onMessage(char *topic, byte *payload, unsigned int len) {
   while (len && isspace((unsigned char)buf[len - 1]))
     buf[--len] = 0;
 
+  if (!strcmp(topic, TOPIC_HA_STATUS)) {
+    if (!strcmp(buf, "online")) {
+      Serial.println("MQTT: Home Assistant online, rediscovering");
+      scheduleDiscovery(3000);
+    }
+    return;
+  }
+
   bool closed;
   if (!strcmp(topic, TOPIC_SET) && parseClosed(buf, &closed)) {
     eyeClosed = closed;
@@ -146,6 +269,18 @@ static void mqttService(void) {
     return;
   if (mqtt.connected()) {
     mqtt.loop();
+    const uint32_t now = millis();
+    if (discoveryDueMs && (int32_t)(now - discoveryDueMs) >= 0) {
+      discoveryDueMs = 0;
+      publishDiscovery();
+      statesDueMs = now + 1000;
+      if (!statesDueMs)
+        statesDueMs = 1;
+    }
+    if (statesDueMs && (int32_t)(now - statesDueMs) >= 0) {
+      statesDueMs = 0;
+      publishStates();
+    }
     return;
   }
   static uint32_t lastTry = 0;
@@ -163,6 +298,8 @@ static void mqttService(void) {
     mqtt.subscribe(TOPIC_SET);
     publishState();
 #endif
+    mqtt.subscribe(TOPIC_HA_STATUS);
+    scheduleDiscovery(1000);
   } else {
     Serial.printf("failed, rc=%d\n", mqtt.state());
   }
@@ -217,6 +354,7 @@ void setup() {
 
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMessage);
+  mqtt.setBufferSize(1024); // Default 256 is too small for discovery
 
   display.setSPIHost(SPI2_HOST);          // HSPI on classic ESP32
   display.setSPISpeed(40000000);
@@ -254,6 +392,12 @@ void loop() {
   eyeSync.send();
 #endif
   mqttService();
+#if defined(EYES_ROLE_SECONDARY)
+  if (eyeSync.live() != syncLocked) {
+    syncLocked = eyeSync.live();
+    publishSync();
+  }
+#endif
 
   static uint32_t last = 0;
   static bool wasConnected = false;
