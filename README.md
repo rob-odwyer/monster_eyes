@@ -3,7 +3,18 @@
 PlatformIO test project: Adafruit Monster Eyes 2.3.0 driving the CYD's ILI9341 over
 esp_lcd/DMA. Compiles for `esp32dev` with the Arduino 3.2.1 core. Not yet run on hardware.
 
-## What is patched (see cyd-ili9341.patch, applied in lib/Adafruit_Monster_Eyes)
+## Getting the code
+The library is a git submodule pointing at the fork
+https://github.com/rob-odwyer/Adafruit_Monster_Eyes, which carries the patches below.
+
+    git clone --recurse-submodules <this repo>
+    # or, in an existing clone:
+    git submodule update --init
+
+To move to newer library commits: `git -C lib/Adafruit_Monster_Eyes pull`, then commit
+the updated `lib/Adafruit_Monster_Eyes` pointer here.
+
+## What is patched (on the fork's main branch; also exported as cyd-ili9341.patch)
 - `Eyes_Assets.cpp`: USB drive mode compiled out when the chip has no native USB
   (`CFG_TUD_ENABLED == 0`, i.e. classic ESP32). Stock library fails to compile otherwise.
 - `Eyes_ESPLCD`: new `EYES_ESPLCD_ILI9341` driver that sends Adafruit's ILI9341 init
