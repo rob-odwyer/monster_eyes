@@ -17,7 +17,13 @@ wall_sides = 2;
 wall_top = 1.5;
 wall_bot = 2;
 
-box_inner = [pcb.x + 2 * clearance, pcb.y + 2 * clearance, pcb_zofs + pcb.z + lcd.z + lcd_gap];
+// Power jack cutout in the box's right wall: [along wall, height]. Sized for
+// a typical USB-C plug overmold (about 12 x 7 mm) with room to spare.
+// Centred on the inside height, jack_y along the wall (negative = front).
+jack_cutout = [24, 10];
+jack_y = -6;
+
+box_inner =[pcb.x + 2 * clearance, pcb.y + 2 * clearance, pcb_zofs + pcb.z + lcd.z + lcd_gap];
 box_outer = [box_inner.x + 2 * wall_sides, box_inner.y + 2 * wall_sides, box_inner.z + wall_top + wall_bot];
 
 // --- Eye ---------------------------------------------------------------

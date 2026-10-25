@@ -32,8 +32,8 @@ rib_width = 1.6;
 rib_depth = 0.6;
 
 // --- Sockets ---------------------------------------------------------------
-// Rims on the back that the box lids push into. The power jack sits low on
-// the box side (below the PCB), so keep socket_depth under ~6 mm to clear it.
+// Rims on the back that the box lids push into. Each rim has a notch where
+// the box's power jack cutout is, so the plug is not blocked.
 socket_fit = 0.25; // per side; raise for a looser push fit
 socket_wall = 1.6;
 socket_depth = 5;
@@ -94,6 +94,13 @@ module socket_rects(grow=0) {
       square([socket_inner.x + 2 * grow, socket_inner.y + 2 * grow], center=true);
 }
 
+// Power jack cutouts, on each box's right side before it is spun
+module jack_notches() {
+  for (i = [0, 1]) translate(box_centers[i]) rotate(box_spins[i])
+        translate([box_outer.x / 2 - 1, jack_y - (jack_cutout.x + 1) / 2])
+          square([socket_wall + socket_fit + 2, jack_cutout.x + 1]);
+}
+
 // --- 3D --------------------------------------------------------------------
 
 // Front face on z=0, back toward +z. Viewed from below, so x is mirrored.
@@ -105,6 +112,7 @@ module faceplate_print() {
           linear_extrude(socket_depth + 0.01) difference() {
               socket_rects(socket_wall);
               socket_rects();
+              jack_notches();
             }
       }
       // eye holes, bevelled on the front
@@ -120,10 +128,11 @@ module faceplate_print() {
 }
 
 // Stand-in box in the print frame: lid on z=0, floor up at box_outer.z.
-// The red block marks the power jack, which sits low on the box's right side.
+// The red block marks the power jack cutout on the box's right side.
 module box_standin() {
   color("#4488cc") translate([-box_outer.x / 2, -box_outer.y / 2, 0]) cube(box_outer);
-  color("#cc3333") translate([box_outer.x / 2, -10, box_outer.z - wall_bot - 7]) cube([2, 20, 6]);
+  color("#cc3333") translate([box_outer.x / 2, jack_y - jack_cutout.x / 2, (box_outer.z - jack_cutout.y) / 2])
+      cube([2, jack_cutout.x, jack_cutout.y]);
 }
 
 if (part == "print") {

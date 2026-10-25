@@ -119,7 +119,7 @@ box_make(print=true, explode=0.1, hide_box=false)
     Y(-3) box_part(BOT, BACK) box_cutout(keyhole(3.5, 7.5), anchor=BACK);
     
     // power jacks
-    Y(-6) box_part(RIGHT) box_cutout(rect([20,8],chamfer=0.5),chamfer=0.5);
+    Y(jack_y) box_part(RIGHT) box_cutout(rect(jack_cutout,chamfer=0.5),chamfer=0.5);
 
   }
   
