@@ -1,7 +1,7 @@
 From 39f319880d813fc6430487a3d3c8ef315f32aef1 Mon Sep 17 00:00:00 2001
 From: Rob ODwyer <odwyerrob@gmail.com>
 Date: Thu, 8 Oct 2026 13:43:12 -0700
-Subject: [PATCH] Classic ESP32: build without native USB; esp_lcd ILI9341
+Subject: [PATCH 1/2] Classic ESP32: build without native USB; esp_lcd ILI9341
  driver
 
 ---
@@ -141,6 +141,64 @@ index 0791b50..c256aba 100644
    void drain(int eye, int limit);
    void fillPanel(int eye, uint16_t color);
  
+-- 
+2.39.3 (Apple Git-145)
+
+
+From 8d40248ab13929508868983cfda833677e5d6140 Mon Sep 17 00:00:00 2001
+From: Rob ODwyer <odwyerrob@gmail.com>
+Date: Sat, 24 Oct 2026 20:24:28 -0700
+Subject: [PATCH 2/2] releaseGaze(): resume from the overridden position
+ instead of snapping back
+
+---
+ src/Adafruit_Monster_Eyes.cpp | 11 +++++++++++
+ src/Adafruit_Monster_Eyes.h   | 10 ++++++++--
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/src/Adafruit_Monster_Eyes.cpp b/src/Adafruit_Monster_Eyes.cpp
+index cb2ecea..1a4b246 100644
+--- a/src/Adafruit_Monster_Eyes.cpp
++++ b/src/Adafruit_Monster_Eyes.cpp
+@@ -1101,6 +1101,17 @@ void Adafruit_Monster_Eyes::setGaze(float x, float y) {
+   _gazeExternal = true;
+ }
+ 
++void Adafruit_Monster_Eyes::releaseGaze(void) {
++  if (_gazeExternal) {
++    // Resume from the overridden position, at rest, starting a fresh hold.
++    _eyeOldX = _eyeNewX = _frameEyeX;
++    _eyeOldY = _eyeNewY = _frameEyeY;
++    _eyeInMotion = false;
++    _eyeMoveStartTime = micros();
++  }
++  _gazeExternal = false;
++}
++
+ void Adafruit_Monster_Eyes::setGazeMap(float x, float y) {
+   _frameEyeX = x;
+   _frameEyeY = y;
+diff --git a/src/Adafruit_Monster_Eyes.h b/src/Adafruit_Monster_Eyes.h
+index 16d17cd..d4471a3 100644
+--- a/src/Adafruit_Monster_Eyes.h
++++ b/src/Adafruit_Monster_Eyes.h
+@@ -330,8 +330,14 @@ public:
+    */
+   void setGaze(float x, float y);
+ 
+-  /** @brief Hand the gaze back to the autonomous animator. */
+-  void releaseGaze(void) { _gazeExternal = false; }
++  /**
++   * @brief Hand the gaze back to the autonomous animator.
++   *
++   * The animator resumes from wherever the gaze was last put, holding there
++   * for its usual interval, rather than snapping back to where it was before
++   * the override.
++   */
++  void releaseGaze(void);
+ 
+   /** @brief Where the eye is looking. @return -1.0 to 1.0. */
+   float gazeX(void) const;
 -- 
 2.39.3 (Apple Git-145)
 

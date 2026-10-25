@@ -24,6 +24,8 @@ Broker 10.0.0.13:1883, client id `monster-eyes-cyd`.
 | `monster_eyes/eye/set`   | to board  | `open` / `closed` (also on/off, 1/0)      |
 | `monster_eyes/eye/state` | from board| `open` / `closed`, retained               |
 | `monster_eyes/status`    | from board| `online` / `offline`, retained, LWT       |
+| `monster_eyes/center/set`   | to board   | `on` / `off` (also 1/0, true/false)    |
+| `monster_eyes/center/state` | from board | `on` / `off`, retained                 |
 
 `./eye.py open`, `./eye.py closed`, `./eye.py watch` use paho-mqtt from the
 homeassistant pyenv to drive and observe it. A command eases the lids shut over
@@ -37,6 +39,7 @@ a board sends a non-retained config to `homeassistant/device/<id>/config`:
 | device | entity | notes |
 |--------|--------|-------|
 | Monster eyes (`monster_eyes_primary`) | switch "Open" | on = open, off = closed; unavailable when the primary is offline |
+| | switch "Center eyes" | on = ease to the centre and hold still; off = look around as usual |
 | Monster eyes secondary (`monster_eyes_secondary`) | binary sensor "Online" | diagnostic, connectivity |
 | | binary sensor "Sync locked" | diagnostic; on while the I2C link is carrying state |
 

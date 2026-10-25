@@ -11,6 +11,8 @@
 // MQTT topics (see TOPIC_* below):
 //   monster_eyes/eye/set    <- "open" | "closed"  (also on/off, 1/0, true/false)
 //   monster_eyes/eye/state  -> "open" | "closed"  (retained)
+//   monster_eyes/center/set   <- "on" | "off"  (also 1/0, true/false)
+//   monster_eyes/center/state -> "on" | "off"  (retained)
 //   monster_eyes/status     -> "online" | "offline" (retained, LWT)
 // The secondary reports monster_eyes/secondary/status and
 // monster_eyes/secondary/sync ("locked" | "free"); commands go to the
@@ -76,6 +78,8 @@
 #endif
 #define TOPIC_SET       "monster_eyes/eye/set"
 #define TOPIC_STATE     "monster_eyes/eye/state"
+#define TOPIC_CENTER_SET   "monster_eyes/center/set"
+#define TOPIC_CENTER_STATE "monster_eyes/center/state"
 #define TOPIC_SYNC      "monster_eyes/secondary/sync"
 #define TOPIC_HA_STATUS "homeassistant/status"
 #if defined(EYES_ROLE_SECONDARY)
@@ -84,11 +88,15 @@
 #define HA_DEVICE_ID    "monster_eyes_primary"
 #endif
 #define HA_DISCOVERY_TOPIC "homeassistant/device/" HA_DEVICE_ID "/config"
-#define FW_VERSION      "1.1.0"
+#define FW_VERSION      "1.2.0"
 
 // How fast the lids travel on an MQTT command, in blink-phase units per
 // second. 4.0 means a full close takes 250 ms.
 #define LID_SPEED 4.0f
+
+// How long the eye takes to travel to the centre on "Center eyes", in ms.
+// About the length of a natural saccade.
+#define CENTER_MS 150
 
 Eyes_ESPLCD display(EYES_ESPLCD_ILI9341, TFT_W, TFT_H, TFT_SCK, TFT_MOSI,
                     TFT_CS, TFT_DC, TFT_RST);
@@ -109,6 +117,11 @@ PubSubClient mqtt(net);
 static bool eyeClosed = false;   // Commanded state
 static float lidPhase = 0.0f;    // 0 open .. 1 shut, what we are showing now
 static bool lidHeld = false;     // true while we own the lids via setBlink()
+
+static bool eyeCentered = false; // Commanded: hold the gaze at the centre
+static bool gazeHeld = false;    // true while we own the gaze via setGaze()
+static uint32_t centerStartMs = 0;
+static float centerFromX = 0.0f, centerFromY = 0.0f;
 
 // ---------------------------------------------------------------------------
 //  MQTT
@@ -142,12 +155,20 @@ static void publishSync(void) {
 }
 #endif
 
+static void publishCenter(void) {
+#if !defined(EYES_ROLE_SECONDARY)
+  if (mqtt.connected())
+    mqtt.publish(TOPIC_CENTER_STATE, eyeCentered ? "on" : "off", true);
+#endif
+}
+
 static void publishStates(void) {
   mqtt.publish(TOPIC_STATUS, "online", true);
 #if defined(EYES_ROLE_SECONDARY)
   publishSync();
 #else
   publishState();
+  publishCenter();
 #endif
 }
 
@@ -206,6 +227,18 @@ static void publishDiscovery(void) {
   sw["stat_on"] = "open";
   sw["stat_off"] = "closed";
   sw["ic"] = "mdi:eye";
+
+  JsonObject ce = cmps["center_eyes"].to<JsonObject>();
+  ce["p"] = "switch";
+  ce["uniq_id"] = "monster_eyes_center";
+  ce["name"] = "Center eyes";
+  ce["cmd_t"] = TOPIC_CENTER_SET;
+  ce["stat_t"] = TOPIC_CENTER_STATE;
+  ce["pl_on"] = "on";
+  ce["pl_off"] = "off";
+  ce["stat_on"] = "on";
+  ce["stat_off"] = "off";
+  ce["ic"] = "mdi:image-filter-center-focus";
 #endif
 
   static char buf[900];
@@ -235,6 +268,18 @@ static bool parseClosed(const char *s, bool *closed) {
   return false;
 }
 
+static bool parseOn(const char *s, bool *on) {
+  if (!strcasecmp(s, "on") || !strcmp(s, "1") || !strcasecmp(s, "true")) {
+    *on = true;
+    return true;
+  }
+  if (!strcasecmp(s, "off") || !strcmp(s, "0") || !strcasecmp(s, "false")) {
+    *on = false;
+    return true;
+  }
+  return false;
+}
+
 static void onMessage(char *topic, byte *payload, unsigned int len) {
   char buf[16];
   if (len >= sizeof(buf))
@@ -250,6 +295,20 @@ static void onMessage(char *topic, byte *payload, unsigned int len) {
       Serial.println("MQTT: Home Assistant online, rediscovering");
       scheduleDiscovery(3000);
     }
+    return;
+  }
+
+  bool on;
+  if (!strcmp(topic, TOPIC_CENTER_SET) && parseOn(buf, &on)) {
+    if (on && !eyeCentered) {
+      // Start the move from wherever the eye is looking right now.
+      centerFromX = eyes.gazeX();
+      centerFromY = eyes.gazeY();
+      centerStartMs = millis();
+    }
+    eyeCentered = on;
+    Serial.printf("MQTT: center %s\n", on ? "on" : "off");
+    publishCenter();
     return;
   }
 
@@ -296,7 +355,9 @@ static void mqttService(void) {
     mqtt.publish(TOPIC_STATUS, "online", true);
 #if !defined(EYES_ROLE_SECONDARY)
     mqtt.subscribe(TOPIC_SET);
+    mqtt.subscribe(TOPIC_CENTER_SET);
     publishState();
+    publishCenter();
 #endif
     mqtt.subscribe(TOPIC_HA_STATUS);
     scheduleDiscovery(1000);
@@ -332,6 +393,25 @@ static void lidService(void) {
     lidPhase = (lidPhase - step < target) ? target : lidPhase - step;
   eyes.setBlink(lidPhase);
   lidHeld = true;
+}
+
+// Ease the gaze to the centre and hold it there while "Center eyes" is on.
+// When it goes off, the animator resumes from the centre. The secondary
+// follows automatically, because the primary sends its gaze every frame.
+static void centerService(void) {
+  if (!eyeCentered) {
+    if (gazeHeld) {
+      eyes.releaseGaze();
+      gazeHeld = false;
+    }
+    return;
+  }
+  float k = (float)(millis() - centerStartMs) / (float)CENTER_MS;
+  if (k > 1.0f)
+    k = 1.0f;
+  k = 3.0f * k * k - 2.0f * k * k * k; // Ease in/out, like the library
+  eyes.setGaze(centerFromX * (1.0f - k), centerFromY * (1.0f - k));
+  gazeHeld = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +466,7 @@ void loop() {
   eyeSync.poll(); // Owns gaze, pupil and lids while packets arrive
 #else
   lidService();
+  centerService();
 #endif
   eyes.animate();
 #if defined(EYES_ROLE_PRIMARY)
